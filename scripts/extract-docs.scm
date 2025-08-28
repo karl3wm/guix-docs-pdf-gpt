@@ -1,10 +1,11 @@
-#!/usr/bin/env guile
+#!/usr/bin/env -S guile-3.0 -e main -s
 !#
 ;; Extract Guix module docs from docstrings into a Markdown file.
 ;; Produces: build/guix-modules.md
+;; Requires GUILE_LOAD_PATH to include the Guix checkout (the repo top-level).
 
 (use-modules (ice-9 modules)
-             (ice-9 rdelim)
+             (ice-9 documentation)
              (ice-9 pretty-print)
              (ice-9 format)
              (srfi srfi-1))
@@ -21,6 +22,7 @@
     (guix packages)
     (guix profiles)
     (guix store)
+    (guix build-system)
     (guix build-system gnu)
     (guix build-system cmake)
     (guix build-system go)
@@ -40,19 +42,23 @@
            #f)))))
 
 (define (module->entries m)
-  (let ((entries '()))
+  (let ((entries '())
+        (iface (module-public-interface m)))
     (module-map
      (lambda (sym var)
        (let ((doc (var->doc var)))
          (when (and doc (string? doc) (not (string-null? doc)))
            (set! entries (cons (list sym doc) entries)))))
-     m)
+     iface)
     (sort entries (lambda (a b)
                     (string-ci<? (symbol->string (car a))
                                  (symbol->string (car b)))))))
 
 (define (module-name->string name)
   (string-join (map symbol->string name) " "))
+
+(define (mkdir-p path)
+  (false-if-exception (mkdir path #o755)))
 
 (define (doc-module port name)
   (let ((m (safe (lambda () (resolve-interface name)))))
@@ -67,14 +73,14 @@
                (lambda (pair)
                  (let ((sym (car pair)) (doc (cadr pair)))
                    (format port "## ~a\n\n" (symbol->string sym))
-                   ;; Docstrings in Guix often use Texinfo; we leave them as-is.
+                   ;; Docstrings are often Texinfo; we keep them as-is.
                    (format port "~a\n\n" doc)))
                entries))))))
 
 (define (main args)
   (let ((out-dir "build")
         (out-file "build/guix-modules.md"))
-    (mkdir out-dir 493) ;; 0755
+    (mkdir-p out-dir)
     (call-with-output-file out-file
       (lambda (port)
         (format port "# Guix API (docstrings dump)\n\n")
