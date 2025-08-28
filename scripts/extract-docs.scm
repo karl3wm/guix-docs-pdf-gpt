@@ -4,7 +4,7 @@
 ;; Produces: build/guix-modules.md
 ;; Requires GUILE_LOAD_PATH to include the Guix checkout (the repo top-level).
 
-(use-modules (ice-9 modules)
+(use-modules ;(ice-9 modules)
              (ice-9 documentation)
              (ice-9 pretty-print)
              (ice-9 format)
