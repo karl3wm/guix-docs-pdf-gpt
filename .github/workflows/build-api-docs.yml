@@ -35,6 +35,15 @@ jobs:
         run: |
           git clone --depth=1 https://git.savannah.gnu.org/git/guix.git
           ls -la guix | head -n 50
+          
+      - name: Diagnose Guile paths
+        run: |
+          which guile || true
+          which guile-3.0 || true
+          guile --version || true
+          guile-3.0 --version
+          guile-3.0 -c '(display (effective-version))(newline)'
+          guile-3.0 -c '(for-each (lambda (p) (display p)(newline)) %load-path)'
 
       - name: Extract docstrings to Markdown (force Guile 3.0)
         env:
