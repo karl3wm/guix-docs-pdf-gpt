@@ -1,0 +1,38 @@
+name: Build API docs from Guix docstrings (PDF)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  api-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Guile, Guix, Pandoc, LaTeX)
+        run: |
+          sudo apt-get update
+          # guix package is in Ubuntu repos; if this fails, see note below.
+          sudo apt-get install -y guile-3.0 guix pandoc \
+            texlive-latex-base texlive-latex-recommended \
+            texlive-fonts-recommended texlive-latex-extra
+
+      - name: Extract docstrings to Markdown
+        run: |
+          guile scripts/extract-docs.scm
+          test -f build/guix-modules.md && head -n 20 build/guix-modules.md || true
+
+      - name: Convert Markdown to PDF via pandoc
+        run: |
+          pandoc build/guix-modules.md \
+            -V geometry:margin=1in \
+            -V documentclass:article \
+            -o build/guix-api-docs.pdf
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: guix-api-docs
+          path: build/guix-api-docs.pdf
