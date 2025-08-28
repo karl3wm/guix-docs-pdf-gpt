@@ -1,4 +1,4 @@
-name: Guix + Guile Documentá → Guix API PDF (cached)
+name: Guix + Guile Documentá → Guix API PDF
 
 on:
   workflow_dispatch:
@@ -9,121 +9,64 @@ jobs:
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
-      # Document just the Guix module tree by default; "guix gnu" is larger.
+      # Document just the Guix module tree by default; change to: "guix gnu" for everything (big).
       MODULE_SOURCES: "guix"
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install host deps (Texinfo/PDF + zstd)
+      - name: Install host deps (Texinfo/PDF)
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl xz-utils zstd git \
+          sudo apt-get install -y curl xz-utils bzip2 git gnupg ca-certificates \
             texinfo \
             texlive-latex-base texlive-latex-recommended \
             texlive-fonts-recommended texlive-latex-extra
 
-      # Cache the Guix binary tarball to avoid re-downloading it.
-      - name: Cache Guix binary tarball
-        id: cache-guix-bin
-        uses: actions/cache@v4
-        with:
-          path: .cache/guix/guix-binary-1.4.0.x86_64-linux.tar.xz
-          key: guix-binary-1.4.0
-
-      - name: Download Guix binary (if not cached)
-        if: steps.cache-guix-bin.outputs.cache-hit != 'true'
+      - name: Download Guix binary tarball
         run: |
-          mkdir -p .cache/guix
-          curl -L -o .cache/guix/guix-binary-1.4.0.x86_64-linux.tar.xz \
-            https://ftp.gnu.org/gnu/guix/guix-binary-1.4.0.x86_64-linux.tar.xz
+          curl -L -o guix-binary.tar.xz https://ftp.gnu.org/gnu/guix/guix-binary-1.4.0.x86_64-linux.tar.xz
 
       - name: Install Guix and start daemon
         run: |
           set -eux
-          sudo tar --extract \
-            --file=.cache/guix/guix-binary-1.4.0.x86_64-linux.tar.xz \
-            --directory=/ --no-same-owner --warning=no-unknown-keyword
+          sudo tar --extract --file=guix-binary.tar.xz --directory=/ --no-same-owner --warning=no-unknown-keyword
+
+          # Create build users (idempotent)
           sudo groupadd --system guixbuild || true
           for i in $(seq -w 1 10); do
             sudo useradd -g guixbuild -G guixbuild -d /var/empty \
               -s "$(command -v nologin || echo /usr/sbin/nologin)" \
               -c "Guix build user $i" guixbuilder$i || true
           done
+
+          # Start daemon (we do it explicitly instead of via systemd)
           sudo -E /var/guix/profiles/per-user/root/current-guix/bin/guix-daemon \
             --build-users-group=guixbuild \
             --disable-chroot \
             --substitute-urls='https://ci.guix.gnu.org https://bordeaux.guix.gnu.org' &
           sleep 5
+
+          # Make the initial root profile 'guix' visible to later steps
+          echo "/var/guix/profiles/per-user/root/current-guix/bin" >> "$GITHUB_PATH"
           guix --version
 
-      - name: Configure Guix channels
-        run: |
-          mkdir -p "$HOME/.config/guix"
-          cat > "$HOME/.config/guix/channels.scm" <<'EOF'
-          (list
-            (channel
-              (name 'guix)
-              (url "https://git.savannah.gnu.org/git/guix.git"))
-            ;; If guile-documenta is not in your Guix, add the author’s channel here:
-            ;; (channel
-            ;;   (name 'documenta)
-            ;;   (url "https://codeberg.org/USER/CHANNEL.git"))
-          )
-          EOF
-          cat "$HOME/.config/guix/channels.scm"
-
-      - name: guix pull (update to latest)
+      - name: guix pull (user profile) and expose to PATH
         run: |
           set -eux
           guix pull
-          . "$HOME/.config/guix/current/etc/profile"
+          # Add the per-user "current" profile to PATH for subsequent steps
+          echo "$HOME/.config/guix/current/bin" >> "$GITHUB_PATH"
           guix describe
 
-      # Compute a cache key tied to the exact channel revision we just pulled.
-      - name: Compute cache key from channels
-        id: guix-key
+      - name: Install Guile Documentá
         run: |
           set -eux
-          . "$HOME/.config/guix/current/etc/profile"
-          guix describe -f channels > channels.scm
-          sha=$(sha256sum channels.scm | cut -d' ' -f1)
-          echo "key=$sha" >> "$GITHUB_OUTPUT"
-          mkdir -p cache
-
-      # Try to restore a tar.zst of the Guix store closure for Documentá+current-guix.
-      - name: Restore Guix store cache
-        id: store-cache
-        uses: actions/cache@v4
-        with:
-          path: cache/guix-store-${{ steps.guix-key.outputs.key }}.tar.zst
-          key: guix-store-${{ steps.guix-key.outputs.key }}
-
-      - name: Extract cached store (if present)
-        if: steps.store-cache.outputs.cache-hit == 'true'
-        run: |
-          sudo tar -I zstd -xf "cache/guix-store-${{ steps.guix-key.outputs.key }}.tar.zst" -C /
-
-      - name: Install Guile Documentá via Guix
-        run: |
-          set -eux
-          . "$HOME/.config/guix/current/etc/profile"
           guix install guile-documenta
-          . "$HOME/.guix-profile/etc/profile"
-          command -v documenta
+          # Add the user's default profile to PATH (where documenta lives)
+          echo "$HOME/.guix-profile/bin" >> "$GITHUB_PATH"
+          which documenta
           documenta --version || true
-
-      # If we missed the cache, pack the closure for next runs.
-      - name: Save store tarball for cache (closure)
-        if: steps.store-cache.outputs.cache-hit != 'true'
-        run: |
-          set -eux
-          . "$HOME/.config/guix/current/etc/profile"
-          . "$HOME/.guix-profile/etc/profile"
-          # Tar the transitive closures (requisites) of both the current-guix and your profile.
-          paths=$(guix gc --requisites "$HOME/.config/guix/current" "$HOME/.guix-profile")
-          sudo tar -I "zstd -T0 -19" -cf "cache/guix-store-${{ steps.guix-key.outputs.key }}.tar.zst" $paths
-          ls -lh "cache/guix-store-${{ steps.guix-key.outputs.key }}.tar.zst" || true
 
       - name: Clone Guix sources (to document)
         run: |
@@ -131,11 +74,14 @@ jobs:
 
       - name: Generate Texinfo API with Documentá
         working-directory: guix
+        env:
+          # Prepend the checkout dir so modules like (guix …) resolve from ./guix
+          GUILE_LOAD_PATH: ${{ github.workspace }}/guix
         run: |
           mkdir -p doc
-          # If documenting both 'guix' and 'gnu' (huge), set env MODULE_SOURCES: "guix gnu"
+          # e.g. MODULE_SOURCES: "guix" or "guix gnu"
           documenta api $MODULE_SOURCES --destination doc/api
-          # Minimal wrapper manual including the generated API
+          # Wrap in a tiny manual that includes the generated API
           cat > doc/main.texi <<'EOF'
           \input texinfo
           @setfilename guix-api
@@ -157,7 +103,7 @@ jobs:
           @bye
           EOF
 
-      - name: Build PDF from Texinfo
+      - name: Build PDF
         working-directory: guix/doc
         run: |
           makeinfo --no-split --pdf -o guix-api-documenta.pdf main.texi
