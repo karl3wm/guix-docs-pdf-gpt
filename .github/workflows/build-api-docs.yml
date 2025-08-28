@@ -7,21 +7,41 @@ on:
 
 jobs:
   api-docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # more predictable Guile packaging
+
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps (Guile, Guix, Pandoc, LaTeX)
+      - name: Install deps (Guile 3.0, Pandoc, LaTeX)
         run: |
           sudo apt-get update
-          # guix package is in Ubuntu repos; if this fails, see note below.
-          sudo apt-get install -y guile-3.0 guix pandoc \
+          sudo apt-get install -y \
+            git ca-certificates \
+            guile-3.0 \
+            pandoc \
             texlive-latex-base texlive-latex-recommended \
             texlive-fonts-recommended texlive-latex-extra
+          # Show which guile we have
+          which guile || true
+          guile --version || true
+          which guile-3.0
+          guile-3.0 --version
 
-      - name: Extract docstrings to Markdown
+      - name: Clone Guix sources (for module load path)
         run: |
-          guile scripts/extract-docs.scm
+          git clone --depth=1 https://git.savannah.gnu.org/git/guix.git
+          ls -la guix | head -n 50
+
+      - name: Extract docstrings to Markdown (force Guile 3.0)
+        env:
+          GUILE_LOAD_PATH: ${{ github.workspace }}/guix
+        run: |
+          guile-3.0 -c '(display %load-path)(newline)'
+          guile-3.0 scripts/extract-docs.scm
           test -f build/guix-modules.md && head -n 20 build/guix-modules.md || true
 
       - name: Convert Markdown to PDF via pandoc
